@@ -204,7 +204,6 @@ jobs:
                   return sorted_queries
 
           QUERIES = generate_queries()
-          # This assertion guarantees we have exactly 1890 queries
           assert len(QUERIES) == 1890, f"Expected 1890, got {len(QUERIES)}"
           print(f'[+] Loaded {len(QUERIES)} queries')
 
@@ -326,7 +325,7 @@ jobs:
               if reset: token_limits[token]['reset'] = int(reset)
 
           async def get_token():
-              nonlocal token_idx
+              global token_idx
               now = time.time()
               for _ in range(len(GITHUB_TOKENS)):
                   t = GITHUB_TOKENS[token_idx % len(GITHUB_TOKENS)]
