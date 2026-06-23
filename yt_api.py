@@ -104,7 +104,7 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
         if YT_DLP_PATH is None:
             self._send_json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
-                {"error": "yt-dlp is required in PATH"},
+                {"error": "yt-dlp is not installed or not found in PATH. Please install yt-dlp."},
             )
             return
         url = parse_input(self)
@@ -127,7 +127,10 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.GATEWAY_TIMEOUT, {"error": "Download timed out"})
                 return
             if process.returncode != 0:
-                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "Download failed"})
+                self._send_json(
+                    HTTPStatus.BAD_GATEWAY,
+                    {"error": "Download failed. Check URL availability and access restrictions."},
+                )
                 return
             ext = ".mp3" if fmt == "mp3" else ".mp4"
             files = [f for f in os.listdir(tmpdir) if f.lower().endswith(ext)]
@@ -177,7 +180,10 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
 
 def run() -> None:
     host = os.getenv("HOST", "127.0.0.1")
-    port = int(os.getenv("PORT", "8000"))
+    try:
+        port = int(os.getenv("PORT", "8000"))
+    except ValueError:
+        port = 8000
     server = ThreadingHTTPServer((host, port), YTDownloadHandler)
     print(f"Serving YT API on {host}:{port}")
     server.serve_forever()

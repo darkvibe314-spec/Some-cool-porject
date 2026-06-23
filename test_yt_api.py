@@ -1,11 +1,12 @@
 import unittest
 import tempfile
+import os
 
 from yt_api import build_command, is_supported_url, normalize_youtube_url
 
 
 class TestYTApiHelpers(unittest.TestCase):
-    out_template = f"{tempfile.gettempdir()}/%(id)s.%(ext)s"
+    out_template = os.path.join(tempfile.gettempdir(), "%(id)s.%(ext)s")
 
     def test_valid_youtube_urls(self) -> None:
         self.assertTrue(is_supported_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
