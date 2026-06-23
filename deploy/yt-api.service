@@ -1,0 +1,17 @@
+[Unit]
+Description=YouTube MP3/MP4 API
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/yt-api
+Environment=HOST=127.0.0.1
+Environment=PORT=4677
+ExecStart=/opt/yt-api/.venv/bin/python /opt/yt-api/yt_api.py
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target
