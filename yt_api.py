@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 
 ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
@@ -56,7 +56,7 @@ def parse_input(handler: BaseHTTPRequestHandler) -> str | None:
         raw = handler.rfile.read(content_length)
         try:
             payload = json.loads(raw.decode("utf-8"))
-        except json.JSONDecodeError:
+        except (UnicodeDecodeError, json.JSONDecodeError):
             return None
         return payload.get("url")
     return None
@@ -148,9 +148,14 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
                 return
             file_path = os.path.join(tmpdir, files[0])
             file_size = os.path.getsize(file_path)
+            safe_filename = files[0].replace("\r", "").replace("\n", "").replace('"', "")
+            encoded_filename = quote(safe_filename)
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "audio/mpeg" if fmt == "mp3" else "video/mp4")
-            self.send_header("Content-Disposition", f'attachment; filename="{files[0]}"')
+            self.send_header(
+                "Content-Disposition",
+                f"attachment; filename*=UTF-8''{encoded_filename}",
+            )
             self.send_header("Content-Length", str(file_size))
             self.end_headers()
             with open(file_path, "rb") as downloaded:
