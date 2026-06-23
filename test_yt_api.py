@@ -1,0 +1,27 @@
+import unittest
+
+from yt_api import build_command, is_supported_url
+
+
+class TestYTApiHelpers(unittest.TestCase):
+    def test_valid_youtube_urls(self) -> None:
+        self.assertTrue(is_supported_url("https://www.youtube.com/watch?v=test"))
+        self.assertTrue(is_supported_url("https://youtu.be/example"))
+
+    def test_rejects_non_youtube_urls(self) -> None:
+        self.assertFalse(is_supported_url("https://example.com/video"))
+        self.assertFalse(is_supported_url("ftp://www.youtube.com/watch?v=test"))
+
+    def test_build_mp3_command(self) -> None:
+        cmd = build_command("mp3", "https://youtu.be/abc", "/tmp/%(id)s.%(ext)s")
+        self.assertIn("--extract-audio", cmd)
+        self.assertIn("mp3", cmd)
+
+    def test_build_mp4_command(self) -> None:
+        cmd = build_command("mp4", "https://youtu.be/abc", "/tmp/%(id)s.%(ext)s")
+        self.assertIn("--merge-output-format", cmd)
+        self.assertIn("mp4", cmd)
+
+
+if __name__ == "__main__":
+    unittest.main()
