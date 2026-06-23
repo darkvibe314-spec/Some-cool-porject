@@ -148,7 +148,17 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
                 return
             file_path = os.path.join(tmpdir, files[0])
             file_size = os.path.getsize(file_path)
-            safe_filename = files[0].replace("\r", "").replace("\n", "").replace('"', "")
+            safe_filename = (
+                files[0]
+                .replace("\x00", "")
+                .replace("\r", "")
+                .replace("\n", "")
+                .replace('"', "")
+                .replace("/", "_")
+                .replace("\\", "_")
+            )
+            if not safe_filename:
+                safe_filename = f"download{ext}"
             encoded_filename = quote(safe_filename)
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "audio/mpeg" if fmt == "mp3" else "video/mp4")
