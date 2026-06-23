@@ -108,7 +108,13 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
             )
             return
         url = parse_input(self)
-        normalized_url = normalize_youtube_url(url or "")
+        if not url:
+            self._send_json(
+                HTTPStatus.BAD_REQUEST,
+                {"error": "Missing or invalid YouTube URL parameter/payload"},
+            )
+            return
+        normalized_url = normalize_youtube_url(url)
         if not normalized_url:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid YouTube URL"})
             return
