@@ -9,6 +9,8 @@ from urllib.parse import parse_qs, urlparse
 
 
 ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+MAX_BODY_BYTES = 2048
+DOWNLOAD_TIMEOUT_SECONDS = 300
 
 
 def is_supported_url(raw_url: str) -> bool:
@@ -21,13 +23,29 @@ def is_supported_url(raw_url: str) -> bool:
     return parsed.netloc.lower() in ALLOWED_HOSTS
 
 
+def normalize_youtube_url(raw_url: str) -> str | None:
+    if not is_supported_url(raw_url):
+        return None
+    parsed = urlparse(raw_url.strip())
+    host = parsed.netloc.lower()
+    if host == "youtu.be":
+        video_id = parsed.path.lstrip("/")
+    else:
+        video_id = parse_qs(parsed.query).get("v", [""])[0]
+    if not video_id or len(video_id) != 11:
+        return None
+    if not all(ch.isalnum() or ch in {"_", "-"} for ch in video_id):
+        return None
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 def parse_input(handler: BaseHTTPRequestHandler) -> str | None:
     if handler.command == "GET":
         query = parse_qs(urlparse(handler.path).query)
         return (query.get("url") or [None])[0]
     if handler.command == "POST":
         content_length = int(handler.headers.get("Content-Length", "0"))
-        if content_length <= 0:
+        if content_length <= 0 or content_length > MAX_BODY_BYTES:
             return None
         raw = handler.rfile.read(content_length)
         try:
@@ -82,21 +100,27 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
             )
             return
         url = parse_input(self)
-        if not url or not is_supported_url(url):
+        normalized_url = normalize_youtube_url(url or "")
+        if not normalized_url:
             self._send_json(HTTPStatus.BAD_REQUEST, {"error": "Invalid YouTube URL"})
             return
         with tempfile.TemporaryDirectory(prefix="yt-api-") as tmpdir:
             out_template = os.path.join(tmpdir, "%(id)s.%(ext)s")
-            process = subprocess.run(
-                build_command(fmt, url, out_template),
-                capture_output=True,
-                text=True,
-                check=False,
-            )
+            try:
+                process = subprocess.run(
+                    build_command(fmt, normalized_url, out_template),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=DOWNLOAD_TIMEOUT_SECONDS,
+                )
+            except subprocess.TimeoutExpired:
+                self._send_json(HTTPStatus.GATEWAY_TIMEOUT, {"error": "Download timed out"})
+                return
             if process.returncode != 0:
                 self._send_json(
                     HTTPStatus.BAD_GATEWAY,
-                    {"error": "Download failed", "details": process.stderr.strip()},
+                    {"error": "Download failed", "code": process.returncode},
                 )
                 return
             ext = ".mp3" if fmt == "mp3" else ".mp4"
@@ -105,14 +129,18 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "Output file missing"})
                 return
             file_path = os.path.join(tmpdir, files[0])
-            with open(file_path, "rb") as downloaded:
-                content = downloaded.read()
+            file_size = os.path.getsize(file_path)
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "audio/mpeg" if fmt == "mp3" else "video/mp4")
             self.send_header("Content-Disposition", f'attachment; filename="{files[0]}"')
-            self.send_header("Content-Length", str(len(content)))
+            self.send_header("Content-Length", str(file_size))
             self.end_headers()
-            self.wfile.write(content)
+            with open(file_path, "rb") as downloaded:
+                while True:
+                    chunk = downloaded.read(64 * 1024)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -139,7 +167,7 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
 
 
 def run() -> None:
-    host = os.getenv("HOST", "0.0.0.0")
+    host = os.getenv("HOST", "127.0.0.1")
     port = int(os.getenv("PORT", "8000"))
     server = ThreadingHTTPServer((host, port), YTDownloadHandler)
     print(f"Serving YT API on {host}:{port}")
