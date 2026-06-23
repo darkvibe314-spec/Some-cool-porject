@@ -181,9 +181,9 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
 def run() -> None:
     host = os.getenv("HOST", "127.0.0.1")
     try:
-        port = int(os.getenv("PORT", "8000"))
+        port = int(os.getenv("PORT", "4677"))
     except ValueError:
-        port = 8000
+        port = 4677
     server = ThreadingHTTPServer((host, port), YTDownloadHandler)
     print(f"Serving YT API on {host}:{port}")
     server.serve_forever()
