@@ -1,9 +1,12 @@
 import unittest
+import tempfile
 
 from yt_api import build_command, is_supported_url, normalize_youtube_url
 
 
 class TestYTApiHelpers(unittest.TestCase):
+    out_template = f"{tempfile.gettempdir()}/%(id)s.%(ext)s"
+
     def test_valid_youtube_urls(self) -> None:
         self.assertTrue(is_supported_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ"))
         self.assertTrue(is_supported_url("https://youtu.be/dQw4w9WgXcQ"))
@@ -27,13 +30,13 @@ class TestYTApiHelpers(unittest.TestCase):
         self.assertIsNone(normalize_youtube_url("https://www.youtube.com/watch?v=abc"))
 
     def test_build_mp3_command(self) -> None:
-        cmd = build_command("mp3", "/tmp/%(id)s.%(ext)s")
+        cmd = build_command("mp3", self.out_template)
         self.assertIn("--extract-audio", cmd)
         self.assertIn("mp3", cmd)
         self.assertIn("--batch-file", cmd)
 
     def test_build_mp4_command(self) -> None:
-        cmd = build_command("mp4", "/tmp/%(id)s.%(ext)s")
+        cmd = build_command("mp4", self.out_template)
         self.assertIn("--merge-output-format", cmd)
         self.assertIn("mp4", cmd)
         self.assertIn("--batch-file", cmd)

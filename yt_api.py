@@ -9,6 +9,7 @@ from urllib.parse import parse_qs, urlparse
 
 
 ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
+YOUTUBE_VIDEO_ID_LENGTH = 11
 MAX_BODY_BYTES = 2048
 DOWNLOAD_TIMEOUT_SECONDS = 300
 STREAM_CHUNK_SIZE_BYTES = 64 * 1024
@@ -34,7 +35,7 @@ def normalize_youtube_url(raw_url: str) -> str | None:
         video_id = parsed.path.lstrip("/")
     else:
         video_id = parse_qs(parsed.query).get("v", [""])[0]
-    if not video_id or len(video_id) != 11:
+    if not video_id or len(video_id) != YOUTUBE_VIDEO_ID_LENGTH:
         return None
     if not all(ch.isalnum() or ch in {"_", "-"} for ch in video_id):
         return None
@@ -46,7 +47,10 @@ def parse_input(handler: BaseHTTPRequestHandler) -> str | None:
         query = parse_qs(urlparse(handler.path).query)
         return (query.get("url") or [None])[0]
     if handler.command == "POST":
-        content_length = int(handler.headers.get("Content-Length", "0"))
+        try:
+            content_length = int(handler.headers.get("Content-Length", "0"))
+        except ValueError:
+            return None
         if content_length <= 0 or content_length > MAX_BODY_BYTES:
             return None
         raw = handler.rfile.read(content_length)
@@ -123,15 +127,15 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
                 self._send_json(HTTPStatus.GATEWAY_TIMEOUT, {"error": "Download timed out"})
                 return
             if process.returncode != 0:
-                self._send_json(
-                    HTTPStatus.BAD_GATEWAY,
-                    {"error": "Download failed", "code": process.returncode},
-                )
+                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "Download failed"})
                 return
             ext = ".mp3" if fmt == "mp3" else ".mp4"
             files = [f for f in os.listdir(tmpdir) if f.lower().endswith(ext)]
             if len(files) != 1:
-                self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "Output file missing"})
+                self._send_json(
+                    HTTPStatus.BAD_GATEWAY,
+                    {"error": "Expected exactly one output file"},
+                )
                 return
             file_path = os.path.join(tmpdir, files[0])
             file_size = os.path.getsize(file_path)
