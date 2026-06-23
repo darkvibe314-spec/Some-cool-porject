@@ -11,6 +11,8 @@ from urllib.parse import parse_qs, urlparse
 ALLOWED_HOSTS = {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be"}
 MAX_BODY_BYTES = 2048
 DOWNLOAD_TIMEOUT_SECONDS = 300
+STREAM_CHUNK_SIZE_BYTES = 64 * 1024
+YT_DLP_PATH = shutil.which("yt-dlp")
 
 
 def is_supported_url(raw_url: str) -> bool:
@@ -56,20 +58,21 @@ def parse_input(handler: BaseHTTPRequestHandler) -> str | None:
     return None
 
 
-def build_command(fmt: str, url: str, out_template: str) -> list[str]:
+def build_command(fmt: str, out_template: str) -> list[str]:
     if fmt == "mp3":
         return [
-            "yt-dlp",
+            YT_DLP_PATH or "yt-dlp",
             "--no-playlist",
             "--extract-audio",
             "--audio-format",
             "mp3",
             "-o",
             out_template,
-            url,
+            "--batch-file",
+            "-",
         ]
     return [
-        "yt-dlp",
+        YT_DLP_PATH or "yt-dlp",
         "--no-playlist",
         "-f",
         "bv*+ba/b",
@@ -77,7 +80,8 @@ def build_command(fmt: str, url: str, out_template: str) -> list[str]:
         "mp4",
         "-o",
         out_template,
-        url,
+        "--batch-file",
+        "-",
     ]
 
 
@@ -93,7 +97,7 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _handle_download(self, fmt: str) -> None:
-        if shutil.which("yt-dlp") is None:
+        if YT_DLP_PATH is None:
             self._send_json(
                 HTTPStatus.SERVICE_UNAVAILABLE,
                 {"error": "yt-dlp is required in PATH"},
@@ -108,11 +112,12 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
             out_template = os.path.join(tmpdir, "%(id)s.%(ext)s")
             try:
                 process = subprocess.run(
-                    build_command(fmt, normalized_url, out_template),
+                    build_command(fmt, out_template),
                     capture_output=True,
                     text=True,
                     check=False,
                     timeout=DOWNLOAD_TIMEOUT_SECONDS,
+                    input=f"{normalized_url}\n",
                 )
             except subprocess.TimeoutExpired:
                 self._send_json(HTTPStatus.GATEWAY_TIMEOUT, {"error": "Download timed out"})
@@ -125,7 +130,7 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
                 return
             ext = ".mp3" if fmt == "mp3" else ".mp4"
             files = [f for f in os.listdir(tmpdir) if f.lower().endswith(ext)]
-            if not files:
+            if len(files) != 1:
                 self._send_json(HTTPStatus.BAD_GATEWAY, {"error": "Output file missing"})
                 return
             file_path = os.path.join(tmpdir, files[0])
@@ -137,7 +142,7 @@ class YTDownloadHandler(BaseHTTPRequestHandler):
             self.end_headers()
             with open(file_path, "rb") as downloaded:
                 while True:
-                    chunk = downloaded.read(64 * 1024)
+                    chunk = downloaded.read(STREAM_CHUNK_SIZE_BYTES)
                     if not chunk:
                         break
                     self.wfile.write(chunk)
